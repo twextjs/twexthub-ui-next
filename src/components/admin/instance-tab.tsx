@@ -2,12 +2,8 @@ import { ActivityIcon, MegaphoneIcon, SaveIcon } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
-import type { Quota, ServerConfig, ServerSetting } from "@twextjs/twexthubkit"
+import type { ServerSetting } from "@twextjs/twexthubkit"
 
-import {
-  FALLBACK_ACCOUNT_QUOTA,
-  StorageUsage,
-} from "@/components/admin/storage-usage"
 import { ErrorState, LoadingRows } from "@/components/common/async-state"
 import { CopyButton } from "@/components/common/copy-button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -17,7 +13,6 @@ import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { useAsync } from "@/hooks/use-async"
-import { formatBytes, formatNumber } from "@/lib/format"
 import { adminKeys } from "@/lib/preload"
 import { errorMessage, th } from "@/lib/twexthub"
 
@@ -27,7 +22,6 @@ export function InstanceTab() {
       <ConfigSection />
       <BroadcastSection />
       <MetricsSection />
-      <QuotaSection />
     </div>
   )
 }
@@ -279,153 +273,6 @@ function MetricsSection() {
         <pre className="max-h-80 overflow-auto rounded-lg border p-3 font-mono text-[11px] whitespace-pre-wrap">
           {metrics}
         </pre>
-      ) : null}
-    </section>
-  )
-}
-
-const DEFAULT_QUOTA_SETTING = "limits.maxAccountBlobBytes"
-
-// An account without its own cap follows the registry default, so the meter
-// needs that setting to draw a meaningful scale. If the config cannot be read,
-// the documented fallback keeps the bar working rather than hiding it.
-function resolveRegistryQuota(config: ServerConfig | null): {
-  limit: number
-  assumed: boolean
-} {
-  const setting = config?.settings.find(
-    (entry) => entry.key === DEFAULT_QUOTA_SETTING
-  )
-  const value = setting?.value
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    return { limit: value, assumed: false }
-  }
-  return { limit: FALLBACK_ACCOUNT_QUOTA, assumed: true }
-}
-
-function QuotaSection() {
-  const [namespace, setNamespace] = useState("")
-  const [quota, setQuota] = useState<Quota | null>(null)
-  const [limit, setLimit] = useState("")
-  const [pending, setPending] = useState(false)
-
-  const config = useAsync(
-    (signal) => th.admin.getConfig({ signal }),
-    [],
-    adminKeys.config
-  )
-  const registry = resolveRegistryQuota(config.data ?? null)
-
-  async function load(event: React.FormEvent) {
-    event.preventDefault()
-    setPending(true)
-    try {
-      const result = await th.admin.getQuota(namespace.trim())
-      setQuota(result)
-      setLimit(result.maxBlobBytes === null ? "" : String(result.maxBlobBytes))
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setPending(false)
-    }
-  }
-
-  async function save() {
-    if (!quota) {
-      return
-    }
-    setPending(true)
-    try {
-      const result = await th.admin.setQuota(quota.namespace, {
-        maxBlobBytes: limit === "" ? null : Number(limit),
-      })
-      setQuota(result)
-      setLimit(result.maxBlobBytes === null ? "" : String(result.maxBlobBytes))
-      toast.success("Quota saved.")
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setPending(false)
-    }
-  }
-
-  return (
-    <section className="flex flex-col gap-3">
-      <div>
-        <h2 className="text-base font-medium">Storage quota</h2>
-        <p className="text-sm text-muted-foreground">
-          See how much storage a handle uses against its limit. Accounts without
-          a cap of their own follow the registry default.
-        </p>
-      </div>
-      <form
-        onSubmit={load}
-        className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-end"
-      >
-        <div className="flex flex-1 flex-col gap-1.5">
-          <Label htmlFor="quota-namespace">Handle</Label>
-          <Input
-            id="quota-namespace"
-            value={namespace}
-            onChange={(event) => setNamespace(event.target.value)}
-            required
-            placeholder="account-or-org"
-          />
-        </div>
-        <Button type="submit" variant="outline" disabled={pending}>
-          Look up
-        </Button>
-      </form>
-      {quota ? (
-        <div className="flex flex-col gap-4 rounded-lg border p-4">
-          <StorageUsage
-            namespace={quota.namespace}
-            usedBytes={quota.blobBytes}
-            maxBlobBytes={quota.maxBlobBytes}
-            defaultLimit={registry.limit}
-            defaultIsAssumed={config.status === "error"}
-          />
-          <div className="flex flex-col gap-1.5 sm:max-w-xs">
-            <Label htmlFor="quota-limit">Maximum bytes</Label>
-            <Input
-              id="quota-limit"
-              type="number"
-              min={0}
-              value={limit}
-              onChange={(event) => setLimit(event.target.value)}
-              placeholder={String(registry.limit)}
-            />
-            <p className="text-xs text-muted-foreground">
-              {limit === ""
-                ? `Empty uses the registry default (${formatBytes(registry.limit)}).`
-                : `That is ${formatBytes(Number(limit) || 0)}.`}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              className="self-start"
-              onClick={() => void save()}
-              disabled={pending}
-            >
-              {pending ? "Saving…" : "Save quota"}
-            </Button>
-            {limit !== "" ? (
-              <Button
-                variant="ghost"
-                onClick={() => setLimit("")}
-                disabled={pending}
-              >
-                Use the default
-              </Button>
-            ) : null}
-          </div>
-          {quota.maxBlobBytes !== null ? (
-            <p className="font-mono text-[10px] text-muted-foreground">
-              stored total {formatNumber(quota.blobBytes)} bytes · cap{" "}
-              {formatNumber(quota.maxBlobBytes)} bytes
-            </p>
-          ) : null}
-        </div>
       ) : null}
     </section>
   )

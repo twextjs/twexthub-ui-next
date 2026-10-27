@@ -47,12 +47,61 @@ const legal = {
   },
 }
 
-// Mutable so the admin quota journey can read usage, set a cap, and read it
-// back. A null cap means the account follows the registry default.
-const quotas = new Map([
-  ["kamixfox", { blobBytes: 5 * 1024 * 1024, maxBlobBytes: null }],
-  ["otheruser", { blobBytes: 0, maxBlobBytes: null }],
-])
+// A third account for the admin journeys to moderate. Nothing else signs in as
+// it, so a role change or a deletion here cannot disturb another spec.
+const promotableAccount = {
+  namespace: "promoteme",
+  displayName: "Promotable Account",
+  kind: "user",
+  role: "normal",
+  hasPublished: false,
+  bio: "Moderated by the admin journeys.",
+  avatarUrl: null,
+  bannerUrl: null,
+  createdAt: "2026-10-18T09:00:00.000Z",
+}
+
+// Mutable so the admin journeys can read usage, set a cap, and read it back. A
+// null cap means the account follows the registry default.
+function initialQuotas() {
+  return new Map([
+    ["kamixfox", { blobBytes: 5 * 1024 * 1024, maxBlobBytes: null }],
+    ["otheruser", { blobBytes: 0, maxBlobBytes: null }],
+    ["promoteme", { blobBytes: 5 * 1024 * 1024, maxBlobBytes: null }],
+  ])
+}
+
+let quotas = initialQuotas()
+
+// The account list the admin journeys read and moderate. An entry edited or
+// removed here replaces the list entry rather than the `account` and
+// `otherAccount` objects that sign-in, profiles, and embeds hand out, so a
+// rename or a deletion in one journey cannot change what another one sees.
+function initialUsers() {
+  return [account, otherAccount, promotableAccount]
+}
+
+let users = initialUsers()
+
+/** The profile fields a PATCH is allowed to change, and only those sent. */
+function profileEdits(payload) {
+  const fields = [
+    "displayName",
+    "role",
+    "bio",
+    "website",
+    "github",
+    "avatarUrl",
+    "bannerUrl",
+  ]
+  const edits = {}
+  for (const field of fields) {
+    if (payload[field] !== undefined) {
+      edits[field] = payload[field]
+    }
+  }
+  return edits
+}
 
 // Mutable so the security journey can rename a passkey and read it back.
 const passkeys = [
@@ -112,6 +161,88 @@ const pendingVersion = {
   downloads: 0,
   _links: {
     source: `${ORIGIN}/v2/@kamixfox/myextension/versions/0.3.0/source`,
+  },
+}
+
+// A published extension with a newer release waiting for review: the state a
+// publisher's dashboard has to account for, since the registry lists the
+// address but says nothing about the queue behind it.
+const secondSummary = {
+  namespace: "kamixfox",
+  id: "secondproject",
+  name: "Second Project",
+  version: "0.1.0",
+  description: "A published extension with a release in review.",
+  publishedAt: "2026-10-24T09:00:00.000Z",
+  downloads: 2,
+}
+
+const secondPublished = {
+  namespace: "kamixfox",
+  id: "secondproject",
+  version: "0.1.0",
+  status: "published",
+  name: "Second Project",
+  license: "MIT",
+  description: "A published extension with a release in review.",
+  createdAt: "2026-10-24T08:00:00.000Z",
+  publishedAt: "2026-10-24T09:00:00.000Z",
+  downloads: 2,
+  _links: {
+    source: `${ORIGIN}/v2/@kamixfox/secondproject/versions/0.1.0/source`,
+    download: `${ORIGIN}/v2/@kamixfox/secondproject/versions/0.1.0/download`,
+  },
+}
+
+const secondPending = {
+  namespace: "kamixfox",
+  id: "secondproject",
+  version: "0.2.0",
+  status: "pending",
+  ownerNamespace: "kamixfox",
+  name: "Second Project",
+  license: "MIT",
+  description: "A published extension with a release in review.",
+  createdAt: "2026-10-27T08:00:00.000Z",
+  downloads: 0,
+  _links: {
+    source: `${ORIGIN}/v2/@kamixfox/secondproject/versions/0.2.0/source`,
+  },
+}
+
+// An address whose first release is still in review. The registry answers it
+// with a 404 and leaves it out of every listing, so these rows only exist for
+// the account that owns it.
+const rejectedVersion = {
+  namespace: "kamixfox",
+  id: "changes-requested",
+  version: "0.1.0",
+  status: "rejected",
+  ownerNamespace: "kamixfox",
+  name: "Changes Requested",
+  license: "MIT",
+  description: "Sent back by a moderator.",
+  createdAt: "2026-10-27T07:00:00.000Z",
+  rejectionReason: "Remove the network call before this can be published.",
+  downloads: 0,
+  _links: {
+    source: `${ORIGIN}/v2/@kamixfox/changes-requested/versions/0.1.0/source`,
+  },
+}
+
+const submittedVersion = {
+  namespace: "kamixfox",
+  id: "newproject",
+  version: "0.1.0",
+  status: "pending",
+  ownerNamespace: "kamixfox",
+  name: "New Project",
+  license: "MIT",
+  description: "Waiting for its first review.",
+  createdAt: "2026-10-27T09:00:00.000Z",
+  downloads: 0,
+  _links: {
+    source: `${ORIGIN}/v2/@kamixfox/newproject/versions/0.1.0/source`,
   },
 }
 
@@ -257,6 +388,14 @@ function handle(req, res) {
   const url = new URL(req.url, ORIGIN)
   const path = url.pathname.replace(/^\/v2/, "")
 
+  // Test-only: a journey that moderates accounts starts from the state above
+  // rather than from whatever an earlier run left behind.
+  if (path === "/__reset" && req.method === "POST") {
+    users = initialUsers()
+    quotas = initialQuotas()
+    return json(res, 200, { reset: true })
+  }
+
   if (url.pathname === "/idp/authorize") {
     const state = url.searchParams.get("state") ?? ""
     res.writeHead(302, {
@@ -318,8 +457,24 @@ function handle(req, res) {
     return json(res, 200, { data: [] })
   }
 
+  // One token per account, so a browser can hold several signed-in accounts
+  // and every later request says which one it is running as.
   if (path === "/sessions" && req.method === "POST") {
-    return json(res, 200, { token: "test-token", user: account })
+    return readBody(req).then((body) => {
+      let namespace
+      try {
+        namespace = JSON.parse(body).namespace
+      } catch {
+        namespace = undefined
+      }
+      const user = namespace === "otheruser" ? otherAccount : account
+      return json(res, 200, { token: `test-token-${user.namespace}`, user })
+    })
+  }
+
+  if (path === "/sessions/current" && req.method === "DELETE") {
+    res.writeHead(204)
+    return res.end()
   }
 
   if (path === "/sessions" && req.method === "GET") {
@@ -327,10 +482,14 @@ function handle(req, res) {
   }
 
   if (path === "/me") {
-    if (!req.headers.authorization) {
+    const token = String(req.headers.authorization ?? "").replace(
+      /^Bearer\s+/,
+      ""
+    )
+    if (!token) {
       return json(res, 401, { detail: "Missing session token" })
     }
-    return json(res, 200, account)
+    return json(res, 200, token.endsWith("-otheruser") ? otherAccount : account)
   }
 
   if (path === "/meta") {
@@ -341,7 +500,12 @@ function handle(req, res) {
   }
 
   if (path === "/stats") {
-    return json(res, 200, { published: 1, authors: 1, downloads: 5, pending: 1 })
+    return json(res, 200, {
+      published: 1,
+      authors: 1,
+      downloads: 5,
+      pending: 1,
+    })
   }
 
   if (path === "/extensions/trending") {
@@ -353,7 +517,7 @@ function handle(req, res) {
 
   if (path === "/extensions" || path === "/search") {
     return json(res, 200, {
-      data: [summary],
+      data: [summary, secondSummary],
       _links: { next: null, prev: null },
     })
   }
@@ -415,8 +579,35 @@ function handle(req, res) {
 
   if (path === "/users" && req.method === "GET") {
     return json(res, 200, {
-      data: [account, otherAccount],
+      data: users,
       _links: { next: null, prev: null },
+    })
+  }
+
+  if (path === "/users" && req.method === "POST") {
+    return readBody(req).then((body) => {
+      const payload = body ? JSON.parse(body) : {}
+      const namespace = String(payload.namespace ?? "")
+      if (users.some((entry) => entry.namespace === namespace)) {
+        return json(res, 409, {
+          title: "Conflict",
+          detail: `@${namespace} already exists.`,
+        })
+      }
+      const created = {
+        namespace,
+        displayName: payload.displayName ?? namespace,
+        kind: "user",
+        role: "normal",
+        hasPublished: false,
+        bio: null,
+        avatarUrl: null,
+        bannerUrl: null,
+        createdAt: new Date().toISOString(),
+      }
+      // Newest first, the way the registry lists accounts.
+      users = [created, ...users]
+      return json(res, 201, { token: `test-token-${namespace}`, user: created })
     })
   }
 
@@ -521,17 +712,39 @@ function handle(req, res) {
 
   const userMatch = /^\/users\/([^/]+)$/.exec(path)
   if (userMatch) {
-    const target = userMatch[1] === "kamixfox" ? account : otherAccount
+    const namespace = userMatch[1]
+    const index = users.findIndex((entry) => entry.namespace === namespace)
+
+    // Deleting an account that is already gone is not an error: the registry
+    // ends up without it either way.
+    if (req.method === "DELETE") {
+      users = users.filter((entry) => entry.namespace !== namespace)
+      res.writeHead(204)
+      return res.end()
+    }
+
     if (req.method === "PATCH") {
+      if (index === -1) {
+        return json(res, 404, { title: "Not Found", status: 404 })
+      }
       return readBody(req).then((body) => {
         const payload = body ? JSON.parse(body) : {}
-        return json(res, 200, {
-          ...target,
-          displayName: payload.displayName ?? target.displayName,
-        })
+        const next = { ...users[index], ...profileEdits(payload) }
+        users = users.map((entry, at) => (at === index ? next : entry))
+        return json(res, 200, next)
       })
     }
-    return json(res, 200, target)
+
+    if (namespace === "kamixfox") {
+      return json(res, 200, account)
+    }
+    if (namespace === "otheruser") {
+      return json(res, 200, otherAccount)
+    }
+    if (index !== -1) {
+      return json(res, 200, users[index])
+    }
+    return json(res, 200, otherAccount)
   }
 
   if (/^\/users\/[^/]+\/webhooks$/.test(path)) {
@@ -588,8 +801,31 @@ function handle(req, res) {
       }
       if (section === "versions") {
         if (req.method === "POST") {
-          return readBody(req).then(() =>
-            json(res, 201, {
+          // The registry takes the gzipped project itself and refuses anything
+          // else, so a publish that arrived wrapped or empty has to fail here
+          // the way it fails there.
+          const contentType = String(req.headers["content-type"] ?? "")
+          if (!contentType.includes("gzip")) {
+            return json(res, 415, {
+              title: "Unsupported Media Type",
+              detail: "Publish a gzip tarball (application/gzip).",
+            })
+          }
+          if (id === "already-pending") {
+            return readBody(req).then(() =>
+              json(res, 403, {
+                detail: "The owner already has a version awaiting review.",
+              })
+            )
+          }
+          return readBody(req).then((body) => {
+            if (!body.length) {
+              return json(res, 415, {
+                title: "Unsupported Media Type",
+                detail: "The tarball body was empty.",
+              })
+            }
+            return json(res, 201, {
               namespace,
               id,
               version: "0.4.0",
@@ -604,7 +840,7 @@ function handle(req, res) {
                 source: `${ORIGIN}/v2/@${namespace}/${id}/versions/0.4.0/source`,
               },
             })
-          )
+          })
         }
 
         const match = /^\/([^/]+)\/(source|download)$/.exec(rest)
@@ -620,15 +856,42 @@ function handle(req, res) {
           }
         }
         const status = url.searchParams.get("status")
-        if (status === "pending") {
-          // The manage page lists pending releases separately; keep them out of
-          // the published table so the first row is the latest release.
+        // Reading by status is how an owner looks at their own queue, so the
+        // registry asks for a credential for it and refuses an address the
+        // caller does not hold.
+        if (
+          status &&
+          (!req.headers.authorization || namespace !== "kamixfox")
+        ) {
+          return json(res, 403, {
+            detail: "Only an owner or an admin can filter by status.",
+          })
+        }
+        if (id === "newproject") {
           return json(res, 200, {
-            data: [],
+            data: status === "pending" ? [submittedVersion] : [],
             _links: { next: null, prev: null },
           })
         }
-        if (status === "rejected") {
+        if (id === "changes-requested") {
+          return json(res, 200, {
+            data: status === "rejected" ? [rejectedVersion] : [],
+            _links: { next: null, prev: null },
+          })
+        }
+        if (id === "secondproject") {
+          return json(res, 200, {
+            data: status
+              ? status === "pending"
+                ? [secondPending]
+                : []
+              : [secondPublished],
+            _links: { next: null, prev: null },
+          })
+        }
+        if (status === "pending" || status === "rejected") {
+          // The manage page lists the releases only an owner can see, so they
+          // stay out of the published table.
           return json(res, 200, {
             data: [],
             _links: { next: null, prev: null },

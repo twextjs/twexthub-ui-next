@@ -32,6 +32,9 @@ export function LoginPage() {
   const [params] = useSearchParams()
   const { user, loading, signIn } = useAuth()
   const next = safeNext(params.get("next"))
+  // Signing in from the account menu adds to the accounts this browser holds
+  // instead of replacing the one in use.
+  const adding = params.get("add") === "1"
 
   const [namespace, setNamespace] = useState("")
   const [password, setPassword] = useState("")
@@ -46,9 +49,12 @@ export function LoginPage() {
     { apiBaseUrl?: string } | undefined
   const apiBaseUrl = rootData?.apiBaseUrl ?? API_BASE_URL
 
-  usePageMeta("Sign in", "Sign in to publish and manage TurboWarp extensions.")
+  usePageMeta(
+    adding ? "Add an account" : "Sign in",
+    "Sign in to publish and manage TurboWarp extensions."
+  )
 
-  if (!loading && user && !submitted) {
+  if (!loading && user && !submitted && !adding) {
     return <Navigate to={next} replace />
   }
 
@@ -88,9 +94,13 @@ export function LoginPage() {
         <p className="font-mono text-xs tracking-wide text-muted-foreground uppercase">
           TwextHub
         </p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Sign in</h1>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">
+          {adding ? "Add another account" : "Sign in"}
+        </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Use the handle and password for your account.
+          {adding
+            ? `@${user?.namespace ?? ""} stays signed in. Use the handle and password for the account you want to add.`
+            : "Use the handle and password for your account."}
         </p>
       </div>
 
@@ -140,7 +150,13 @@ export function LoginPage() {
                 />
               </div>
               <Button type="submit" disabled={pending}>
-                {pending ? "Signing in…" : "Sign in"}
+                {pending
+                  ? adding
+                    ? "Adding…"
+                    : "Signing in…"
+                  : adding
+                    ? "Add account"
+                    : "Sign in"}
               </Button>
             </form>
           )}

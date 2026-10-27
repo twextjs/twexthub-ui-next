@@ -1,13 +1,17 @@
 import {
   BellIcon,
+  CheckIcon,
   LayoutDashboardIcon,
   LogOutIcon,
   SettingsIcon,
   ShieldIcon,
   UploadIcon,
   UserIcon,
+  UserPlusIcon,
+  UsersIcon,
 } from "lucide-react"
-import { Link } from "react-router"
+import { Link, useLocation } from "react-router"
+import { toast } from "sonner"
 
 import { ButtonLink } from "@/components/common/button-link"
 import { UserAvatar } from "@/components/common/user-avatar"
@@ -19,12 +23,16 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useAuth } from "@/context/auth"
 
 export function AccountMenu() {
-  const { user, isAdmin, signOut } = useAuth()
+  const { user, isAdmin, accounts, signOut, switchAccount } = useAuth()
+  const { pathname, search } = useLocation()
 
   if (!user) {
     return (
@@ -37,6 +45,19 @@ export function AccountMenu() {
         </ButtonLink>
       </div>
     )
+  }
+
+  // Signing in again adds an account to this browser rather than replacing the
+  // one in use, so the page it lands back on is the one being read.
+  const addAccountHref = `/login?add=1&next=${encodeURIComponent(`${pathname}${search}`)}`
+  const several = accounts.length > 1
+
+  async function switchTo(namespace: string) {
+    try {
+      await switchAccount(namespace)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Switch failed.")
+    }
   }
 
   return (
@@ -52,7 +73,7 @@ export function AccountMenu() {
       >
         <UserAvatar name={user.displayName} src={user.avatarUrl} size="sm" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
+      <DropdownMenuContent align="end" className="w-64">
         <DropdownMenuLabel className="flex flex-col">
           <span className="truncate text-sm font-medium">
             {user.displayName}
@@ -85,8 +106,48 @@ export function AccountMenu() {
           ) : null}
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <UsersIcon />
+            Switch accounts
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="w-60">
+            <DropdownMenuLabel>
+              {several ? "Signed in on this browser" : "This browser"}
+            </DropdownMenuLabel>
+            {accounts.map((account) => (
+              <DropdownMenuItem
+                key={account.namespace}
+                disabled={account.namespace === user.namespace}
+                onClick={() => void switchTo(account.namespace)}
+              >
+                <UserAvatar
+                  name={account.displayName}
+                  src={account.avatarUrl}
+                  size="sm"
+                />
+                <span className="min-w-0 flex-1 truncate">
+                  {account.displayName}
+                </span>
+                {account.namespace === user.namespace ? (
+                  <CheckIcon className="text-foreground" />
+                ) : (
+                  <span className="font-mono text-[11px] text-muted-foreground">
+                    @{account.namespace}
+                  </span>
+                )}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem render={<Link to={addAccountHref} />}>
+              <UserPlusIcon /> Add another account
+            </DropdownMenuItem>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => void signOut()}>
-          <LogOutIcon /> Sign out
+          <LogOutIcon />{" "}
+          {several ? `Sign out of @${user.namespace}` : "Sign out"}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

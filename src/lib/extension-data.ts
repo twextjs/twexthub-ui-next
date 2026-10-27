@@ -1,11 +1,87 @@
 import type TwextHubKit from "@twextjs/twexthubkit"
-import type { ExtensionDetail, ExtensionOwner } from "@twextjs/twexthubkit"
+import type {
+  ExtensionDetail,
+  ExtensionOwner,
+  VersionInfo,
+} from "@twextjs/twexthubkit"
 
 export interface ExtensionData {
   extension: ExtensionDetail
   tags: Record<string, string>
   owners: Array<ExtensionOwner & { avatarUrl?: string | null }>
   isOrgOwner: boolean
+  /**
+   * The address has no published release yet, so this page was built from the
+   * releases only an owner may read. A visitor never sees this: the same
+   * requests that carry the rows are also the ones that decide who may read
+   * them.
+   */
+  unpublished: boolean
+}
+
+/**
+ * The releases an owner can see and a visitor cannot. A project whose first
+ * release is still waiting has no public page at all — the registry answers a
+ * stale 404 for it and leaves it out of every listing — but reading it by
+ * status is both the request that hands the rows back and the one that proves
+ * the caller holds the address, so it is what stands in for that 404.
+ *
+ * `null` means this account does not hold the address, and the caller's own
+ * error is the honest answer.
+ */
+export async function loadUnpublishedVersions(
+  kit: TwextHubKit,
+  namespace: string,
+  id: string,
+  signal?: AbortSignal
+): Promise<VersionInfo[] | null> {
+  const pages = await Promise.all(
+    (["pending", "rejected"] as const).map((status) =>
+      kit.extensions.versions
+        .list(namespace, id, { status, limit: 50, signal })
+        .then((page) => page.data)
+        .catch(() => null)
+    )
+  )
+
+  if (pages.every((rows) => rows === null)) {
+    return null
+  }
+
+  const rows = pages.flatMap((page) => page ?? [])
+  if (rows.length === 0) {
+    return null
+  }
+
+  // A submission is newest-first by when it was uploaded: versions are strictly
+  // increasing per address, so creation order reads as release order here.
+  return [...rows].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+
+/**
+ * The public detail shape, assembled from what an unpublished release row
+ * carries. Colors and the sandbox flag are recorded on the published detail and
+ * nowhere else, so they stay unset rather than guessed at.
+ */
+export function detailFromUnpublished(
+  namespace: string,
+  id: string,
+  versions: VersionInfo[]
+): ExtensionDetail {
+  const latest = versions[0]
+  return {
+    namespace,
+    id,
+    name: latest.name || id,
+    version: latest.version,
+    description: latest.description ?? "",
+    publishedAt: latest.publishedAt ?? latest.createdAt,
+    downloads: 0,
+    author: latest.author ?? null,
+    license: latest.license ?? "",
+    isUnsandboxed: null,
+    versions,
+  }
 }
 
 export async function loadExtensionData(
@@ -15,7 +91,19 @@ export async function loadExtensionData(
   viewerNamespace: string | undefined,
   signal?: AbortSignal
 ): Promise<ExtensionData> {
-  const extension = await kit.extensions.get(namespace, id, { signal })
+  let extension: ExtensionDetail
+  let unpublished = false
+  try {
+    extension = await kit.extensions.get(namespace, id, { signal })
+  } catch (error) {
+    const waiting = await loadUnpublishedVersions(kit, namespace, id, signal)
+    if (!waiting) {
+      throw error
+    }
+    extension = detailFromUnpublished(namespace, id, waiting)
+    unpublished = true
+  }
+
   const [tags, owners] = await Promise.all([
     kit.extensions.tags.get(namespace, id, { signal }).catch(() => null),
     kit.extensions.owners.list(namespace, id, { signal }).catch(() => null),
@@ -65,5 +153,6 @@ export async function loadExtensionData(
     tags: tags ?? {},
     owners: ownersWithAvatars,
     isOrgOwner,
+    unpublished,
   }
 }

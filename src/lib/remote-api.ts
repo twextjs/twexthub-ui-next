@@ -2,6 +2,11 @@ import type TwextHubKit from "@twextjs/twexthubkit"
 import { TwextHubError } from "@twextjs/twexthubkit"
 
 import {
+  isUnreachableStatus,
+  reportRegistryReachable,
+  reportRegistryUnreachable,
+} from "@/lib/registry-status"
+import {
   RPC_PATH,
   decodeValue,
   encodeArgs,
@@ -40,6 +45,9 @@ async function callApi(path: string[], args: unknown[]): Promise<unknown> {
     if (error instanceof Error && error.name === "AbortError") {
       throw error
     }
+    // The call never left the browser, which is the same outage to the person
+    // waiting for the page.
+    reportRegistryUnreachable()
     throw new TwextHubError("We couldn’t reach TwextHub. Try again.", {
       status: 502,
     })
@@ -55,11 +63,22 @@ async function callApi(path: string[], args: unknown[]): Promise<unknown> {
 
   if (!response.ok) {
     const failure = payload as RpcFailure | null
+    const status = failure?.error?.status ?? response.status
+    if (isUnreachableStatus(status) || isUnreachableStatus(response.status)) {
+      reportRegistryUnreachable()
+    } else {
+      // The registry answered, and said no. Its pages are still usable.
+      reportRegistryReachable()
+    }
     throw new TwextHubError(
       failure?.error?.message ?? `HTTP ${response.status}`,
-      { status: failure?.error?.status ?? response.status }
+      {
+        status,
+      }
     )
   }
+
+  reportRegistryReachable()
 
   const success = payload as RpcSuccess | null
   if (!success || !("result" in success)) {

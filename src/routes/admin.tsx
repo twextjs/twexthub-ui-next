@@ -23,6 +23,7 @@ export async function loader({ request }: { request: Request }) {
   }
 
   await Promise.all([
+    put(adminKeys.users, () => kit.users.list({ limit: 20 })),
     put(adminKeys.queue, () =>
       kit.admin.listPendingVersions({ status: "pending", limit: 30 })
     ),

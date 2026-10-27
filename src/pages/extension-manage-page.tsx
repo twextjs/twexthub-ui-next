@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAuth } from "@/context/auth"
 import { useAsync } from "@/hooks/use-async"
+import { resolveManageAccess } from "@/lib/extension-access"
 import { manageKeys } from "@/lib/preload"
 import { errorMessage, th } from "@/lib/twexthub"
 
@@ -74,33 +75,12 @@ function ExtensionManage({ namespace, id }: { namespace: string; id: string }) {
 
   const access = useAsync(
     async (signal) => {
-      const extension = await th.extensions.get(namespace, id, { signal })
       if (!user) {
-        return { extension, allowed: false }
+        throw new Error("Sign in to manage this extension.")
       }
-
-      let allowed = isAdmin || extension.namespace === user.namespace
-      if (!allowed) {
-        const owners = await th.extensions.owners.list(namespace, id, {
-          signal,
-        })
-        allowed = owners.data.some(
-          (owner) => owner.namespace === user.namespace
-        )
-      }
-      if (!allowed && extension.namespace !== user.namespace) {
-        try {
-          const orgOwners = await th.orgs.listOwners(extension.namespace, {
-            signal,
-          })
-          allowed = orgOwners.data.some(
-            (owner) => owner.namespace === user.namespace
-          )
-        } catch {
-          // A personal namespace has no org owners; the extension owners check already ran.
-        }
-      }
-      return { extension, allowed }
+      // A project whose first release is still waiting has no published detail,
+      // so the resolver reaches it through the releases only an owner can read.
+      return resolveManageAccess(th, namespace, id, user, isAdmin, signal)
     },
     [namespace, id, user?.namespace, isAdmin],
     manageKeys.access(namespace, id, user?.namespace, isAdmin)

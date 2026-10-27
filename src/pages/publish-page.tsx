@@ -86,7 +86,11 @@ export function PublishPage() {
         toast.success(`Published v${version.version}.`)
       }
     } catch (reason) {
-      setError(errorMessage(reason))
+      // The alert sits with the form, so the message also has to travel: a
+      // toast catches the eye wherever the page happens to be scrolled.
+      const message = errorMessage(reason)
+      setError(message)
+      toast.error(message)
     } finally {
       setPending(false)
     }
@@ -111,15 +115,6 @@ export function PublishPage() {
               Read and accept them
             </Link>
             .
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      {error ? (
-        <Alert variant="destructive">
-          <AlertTitle>We couldn’t publish that</AlertTitle>
-          <AlertDescription className="whitespace-pre-wrap">
-            {error}
           </AlertDescription>
         </Alert>
       ) : null}
@@ -234,6 +229,15 @@ export function PublishPage() {
                   published release.
                 </p>
               </div>
+
+              {error ? (
+                <Alert variant="destructive">
+                  <AlertTitle>We couldn’t publish that</AlertTitle>
+                  <AlertDescription className="whitespace-pre-wrap">
+                    {error}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
 
               <div className="flex flex-wrap items-center gap-2">
                 <Button

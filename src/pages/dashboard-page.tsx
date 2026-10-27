@@ -33,6 +33,28 @@ import { dashboardKey } from "@/lib/preload"
 import { cursorFrom, errorMessage, th } from "@/lib/twexthub"
 import { useSaved } from "@/lib/saved"
 
+/** How many of the publisher's extensions the dashboard lists. */
+const VISIBLE_EXTENSIONS = 6
+
+async function countVersions(
+  namespace: string,
+  id: string,
+  status: "pending" | "rejected",
+  signal: AbortSignal
+): Promise<number> {
+  try {
+    const page = await th.extensions.versions.list(namespace, id, {
+      status,
+      limit: 50,
+      signal,
+    })
+    return page.data.length
+  } catch {
+    // A refused or failed count is not worth an error state on the dashboard.
+    return 0
+  }
+}
+
 export function DashboardPage() {
   const { user, isAdmin } = useAuth()
   const saved = useSaved()
@@ -69,11 +91,38 @@ export function DashboardPage() {
     dashboardKey(user?.namespace)
   )
 
+  const listed = data.data?.extensions ?? []
+  const shown = listed.slice(0, VISIBLE_EXTENSIONS)
+  // The registry lists published addresses and has no per-account view of the
+  // review queue, so the releases waiting for a moderator are read back one
+  // address at a time, for the rows this page actually shows.
+  const shownKey = shown
+    .map((entry) => `${entry.namespace}/${entry.id}`)
+    .join(" ")
+  const review = useAsync(
+    async (signal) => {
+      const entries = await Promise.all(
+        shown.map(async (entry) => {
+          const [pending, rejected] = await Promise.all([
+            countVersions(entry.namespace, entry.id, "pending", signal),
+            countVersions(entry.namespace, entry.id, "rejected", signal),
+          ])
+          return [
+            `${entry.namespace}/${entry.id}`,
+            { pending, rejected },
+          ] as const
+        })
+      )
+      return new Map(entries)
+    },
+    [shownKey]
+  )
+
   if (!user) {
     return null
   }
 
-  const extensions = data.data?.extensions ?? []
+  const extensions = listed
   const downloads = extensions.reduce(
     (total, entry) => total + Number(entry.downloads ?? 0),
     0
@@ -168,7 +217,7 @@ export function DashboardPage() {
             ) : extensions.length === 0 ? (
               <EmptyState
                 title="You have not published yet"
-                description="Create a Twext project and publish it with the CLI, or upload an existing project archive."
+                description="Create a Twext project and publish it with the CLI, or upload an existing project archive. A first release waits for a moderator before it is listed here or in the registry."
                 action={
                   <div className="flex flex-wrap justify-center gap-2">
                     <ButtonLink to="/developers" variant="outline">
@@ -182,10 +231,13 @@ export function DashboardPage() {
               />
             ) : (
               <ul className="divide-y overflow-hidden rounded-lg border">
-                {extensions.slice(0, 6).map((extension) => (
+                {shown.map((extension) => (
                   <ExtensionRow
                     key={`${extension.namespace}/${extension.id}`}
                     extension={extension}
+                    review={review.data?.get(
+                      `${extension.namespace}/${extension.id}`
+                    )}
                   />
                 ))}
               </ul>

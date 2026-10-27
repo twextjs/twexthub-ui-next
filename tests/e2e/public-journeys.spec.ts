@@ -76,25 +76,59 @@ test("footer links to the registry feed", async ({ page }) => {
 test("extension page offers a badge for each fact", async ({ page }) => {
   await visit(page, "/@kamixfox/myextension")
 
+  // The preview comes from this app's server, which fetches the SVG, so no
+  // request leaves the browser for the registry.
+  const badge = page.getByRole("img", { name: "myextension badge" })
+  await expect(badge).toHaveAttribute("src", "/__badge/@kamixfox/myextension")
+  await expect
+    .poll(() => badge.evaluate((image: HTMLImageElement) => image.naturalWidth))
+    .toBeGreaterThan(0)
+
   const viewSvg = page.getByRole("link", { name: "View SVG badge" })
   await expect(viewSvg).toHaveAttribute(
     "href",
-    /\/badge\/@kamixfox\/myextension$/
+    "/__badge/@kamixfox/myextension"
   )
+
+  // What gets pasted into a README names the registry instead: there the badge
+  // is rendered on someone else's page, outside this server.
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
+  await page.getByRole("button", { name: "Copy badge markdown" }).click()
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toContain("/v2/badge/@kamixfox/myextension)")
 
   await page.getByLabel("Badge contents").click()
   await page.getByRole("option", { name: "Downloads", exact: true }).click()
   await expect(viewSvg).toHaveAttribute(
     "href",
-    /\/badge\/@kamixfox\/myextension\/downloads$/
+    "/__badge/@kamixfox/myextension/downloads"
+  )
+  await expect(badge).toHaveAttribute(
+    "src",
+    "/__badge/@kamixfox/myextension/downloads"
   )
 
   await page.getByLabel("Badge contents").click()
   await page.getByRole("option", { name: "Version", exact: true }).click()
   await expect(viewSvg).toHaveAttribute(
     "href",
-    /\/badge\/@kamixfox\/myextension\/version$/
+    "/__badge/@kamixfox/myextension/version"
   )
+})
+
+test("the badge proxy serves badges and nothing else", async ({ request }) => {
+  const badge = await request.get("/__badge/@kamixfox/myextension")
+  expect(badge.status()).toBe(200)
+  expect(badge.headers()["content-type"]).toContain("image/svg+xml")
+  expect(badge.headers()["cache-control"]).toContain("max-age=300")
+  expect(await badge.text()).toContain("<svg")
+
+  // An address the registry would not answer still never reaches it.
+  expect(
+    (await request.get("/__badge/@kamixfox/myextension/spam")).status()
+  ).toBe(404)
+  expect((await request.get("/__badge/@kamixfox")).status()).toBe(404)
 })
 
 test("browse filters can be removed one at a time", async ({ page }) => {

@@ -4,6 +4,11 @@ import {
   type ProblemDetails,
 } from "@twextjs/twexthubkit"
 
+import {
+  isUnreachableStatus,
+  reportRegistryReachable,
+  reportRegistryUnreachable,
+} from "@/lib/registry-status"
 import { th } from "@/lib/remote-api"
 
 const OFFICIAL_API = "https://twexts.sdisk.us/api/v2"
@@ -18,6 +23,7 @@ export const API_BASE_URL = (configured || fallback).replace(/\/+$/, "")
 export const API_ORIGIN = new URL(API_BASE_URL).origin
 export const IS_OFFICIAL_INSTANCE = API_ORIGIN === "https://twexts.sdisk.us"
 export const ASSET_PATH = "/__asset"
+export const BADGE_PATH = "/__badge"
 
 export { th }
 
@@ -56,6 +62,7 @@ async function deviceRequest<T>(
     if (error instanceof Error && error.name === "AbortError") {
       throw error
     }
+    reportRegistryUnreachable()
     throw new TwextHubNetworkError("The device sign-in request failed.", {
       cause: error,
       method: "POST",
@@ -80,6 +87,11 @@ async function deviceRequest<T>(
 
   if (!response.ok) {
     const problem = data as { detail?: string; title?: string } | null
+    if (isUnreachableStatus(response.status)) {
+      reportRegistryUnreachable()
+    } else {
+      reportRegistryReachable()
+    }
     throw new TwextHubError(
       problem?.detail ?? problem?.title ?? `HTTP ${response.status}`,
       {
@@ -92,6 +104,7 @@ async function deviceRequest<T>(
     )
   }
 
+  reportRegistryReachable()
   return data as T
 }
 
@@ -182,6 +195,21 @@ export function cursorFrom(link?: string | null): string | undefined {
 
 export function apiUrl(path: string): string {
   return `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`
+}
+
+/**
+ * The address an <img> can actually load. Badges are the one registry response
+ * the browser used to collect itself; this points at our own server, which
+ * fetches the SVG. Copyable markdown still names the registry, since the badge
+ * is embedded on sites this server is not in the path of.
+ */
+export function badgeUrl(
+  namespace: string,
+  id: string,
+  field?: "version" | "downloads" | "license"
+): string {
+  const path = `${BADGE_PATH}/@${encodeURIComponent(namespace)}/${encodeURIComponent(id)}`
+  return field ? `${path}/${field}` : path
 }
 
 export function downloadUrl(

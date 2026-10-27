@@ -37,9 +37,11 @@ export default [
 
   route("__api", "routes/rpc.ts"),
   route("__session/remember", "routes/remember.ts"),
+  route("__session/accounts", "routes/session-accounts.ts"),
   route("__oidc/link", "routes/oidc-link.ts"),
   route("__device/:action", "routes/device-flow.ts"),
   route("__asset", "routes/asset.ts"),
+  route("__badge/*", "routes/badge.ts"),
 
   route("embed/:namespace/:id", "routes/embed-extension.tsx"),
   route("embed/:namespace", "routes/embed-profile.tsx"),

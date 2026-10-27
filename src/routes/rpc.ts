@@ -1,5 +1,6 @@
-import { TwextHubError } from "@twextjs/twexthubkit"
+import { TwextHubError, type User } from "@twextjs/twexthubkit"
 
+import { summaryFromUser } from "@/lib/accounts.server"
 import { serverApi } from "@/lib/api.server"
 import {
   decodeValue,
@@ -10,7 +11,11 @@ import {
 import {
   commitSession,
   destroySession,
+  forgetAccountToken,
   readSession,
+  rememberAccount,
+  type Session,
+  type SessionData,
 } from "@/lib/session.server"
 
 const BLOCKED = new Set([
@@ -52,14 +57,40 @@ function resolveMethod(kit: unknown, path: string[]) {
   return (method as (...args: unknown[]) => Promise<unknown>).bind(target)
 }
 
+/**
+ * End the active account's session locally, leaving any other account this
+ * browser holds signed in. The cookie is rewritten either way, so a sign-out
+ * that never reached the registry still does not leave the browser pointed at
+ * a token it has been told to forget.
+ */
+async function signOutOfActiveAccount(
+  session: Session<SessionData>
+): Promise<string> {
+  const token = session.get("token")
+  if (token) {
+    forgetAccountToken(session, token)
+  }
+  session.unset("remember")
+  return session.get("token")
+    ? await commitSession(session)
+    : await destroySession(session)
+}
+
 function isSessionPayload(
   value: unknown
-): value is { token: string; user: unknown } {
+): value is { token: string; user: User } {
   if (!value || typeof value !== "object") {
     return false
   }
-  const candidate = value as { token?: unknown; user?: unknown }
-  return typeof candidate.token === "string" && Boolean(candidate.user)
+  const candidate = value as {
+    token?: unknown
+    user?: { namespace?: unknown; displayName?: unknown }
+  }
+  return (
+    typeof candidate.token === "string" &&
+    typeof candidate.user?.namespace === "string" &&
+    typeof candidate.user.displayName === "string"
+  )
 }
 
 export async function action({ request }: { request: Request }) {
@@ -100,28 +131,30 @@ export async function action({ request }: { request: Request }) {
     let result = await method(...args)
 
     if (isSessionPayload(result)) {
-      const { token, ...rest } = result
-      session.set("token", token)
+      const { token, user, ...rest } = result
+      // Signing in is how an account joins the ones this browser holds: the
+      // token becomes the active one and the rest stay signed in behind it.
+      rememberAccount(session, { token, ...summaryFromUser(user) })
       session.unset("remember")
       headers.set("Set-Cookie", await commitSession(session))
       result = rest
     }
 
     if (revoking) {
-      session.unset("token")
-      session.unset("remember")
-      headers.set("Set-Cookie", await destroySession(session))
+      headers.set("Set-Cookie", await signOutOfActiveAccount(session))
     }
 
     return Response.json({ result: await encodeValue(result) }, { headers })
   } catch (error) {
     if (revoking) {
-      session.unset("token")
-      session.unset("remember")
-      headers.set("Set-Cookie", await destroySession(session))
+      headers.set("Set-Cookie", await signOutOfActiveAccount(session))
     }
 
-    const status = error instanceof TwextHubError ? (error.status ?? 502) : 502
+    // A registry the gateway could not reach keeps the kit's 0, which the
+    // response below turns into a 502 the browser can read; anything that is
+    // not a registry error at all is this gateway failing, and says so with a
+    // 500 rather than blaming the outage the client watches for.
+    const status = error instanceof TwextHubError ? (error.status ?? 502) : 500
     const message =
       error instanceof Error && error.message
         ? error.message

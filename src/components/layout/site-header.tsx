@@ -1,9 +1,18 @@
-import { BellIcon, BookmarkIcon, MenuIcon, SearchIcon } from "lucide-react"
+import {
+  BellIcon,
+  BookmarkIcon,
+  CheckIcon,
+  MenuIcon,
+  SearchIcon,
+  UserPlusIcon,
+} from "lucide-react"
 import { useEffect, useRef, useState } from "react"
-import { Link, NavLink, useNavigate } from "react-router"
+import { Link, NavLink, useLocation, useNavigate } from "react-router"
+import { toast } from "sonner"
 
 import { ButtonLink } from "@/components/common/button-link"
 import { ThemeToggle } from "@/components/common/theme-toggle"
+import { UserAvatar } from "@/components/common/user-avatar"
 import { AccountMenu } from "@/components/layout/account-menu"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -36,7 +45,8 @@ function navClass({ isActive }: { isActive: boolean }) {
 
 export function SiteHeader() {
   const navigate = useNavigate()
-  const { user, isAdmin, signOut } = useAuth()
+  const { pathname, search } = useLocation()
+  const { user, isAdmin, accounts, signOut, switchAccount } = useAuth()
   const [query, setQuery] = useState("")
   const [mobileOpen, setMobileOpen] = useState(false)
   const desktopSearch = useRef<HTMLInputElement | null>(null)
@@ -84,6 +94,19 @@ export function SiteHeader() {
     navigate(text ? `/explore?q=${encodeURIComponent(text)}` : "/explore")
     setMobileOpen(false)
   }
+
+  async function switchTo(namespace: string) {
+    setMobileOpen(false)
+    try {
+      await switchAccount(namespace)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Switch failed.")
+    }
+  }
+
+  // Signing in again adds an account rather than replacing the one in use, so
+  // the page it lands back on is the one being read.
+  const addAccountHref = `/login?add=1&next=${encodeURIComponent(`${pathname}${search}`)}`
 
   return (
     <header className="sticky top-0 z-40 border-b bg-background/90 backdrop-blur">
@@ -252,6 +275,44 @@ export function SiteHeader() {
               <SheetFooter className="mt-auto gap-2 border-t p-0 pt-3">
                 {user ? (
                   <>
+                    {accounts.length > 1 ? (
+                      <div className="flex flex-col gap-1 rounded-lg border p-2">
+                        <p className="px-1 text-xs font-medium">
+                          Switch accounts
+                        </p>
+                        {accounts.map((account) => (
+                          <button
+                            key={account.namespace}
+                            type="button"
+                            disabled={account.namespace === user.namespace}
+                            onClick={() => void switchTo(account.namespace)}
+                            className="flex items-center gap-2 rounded-md px-1 py-1.5 text-left text-sm hover:bg-muted disabled:opacity-60 disabled:hover:bg-transparent"
+                          >
+                            <UserAvatar
+                              name={account.displayName}
+                              src={account.avatarUrl}
+                              size="sm"
+                            />
+                            <span className="min-w-0 flex-1 truncate">
+                              {account.displayName}
+                            </span>
+                            <span className="font-mono text-[11px] text-muted-foreground">
+                              @{account.namespace}
+                            </span>
+                            {account.namespace === user.namespace ? (
+                              <CheckIcon className="size-4 text-foreground" />
+                            ) : null}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    <ButtonLink
+                      variant="outline"
+                      to={addAccountHref}
+                      onClick={() => setMobileOpen(false)}
+                    >
+                      <UserPlusIcon /> Add another account
+                    </ButtonLink>
                     <p className="font-mono text-xs text-muted-foreground">
                       @{user.namespace}
                     </p>
@@ -272,7 +333,9 @@ export function SiteHeader() {
                       </ButtonLink>
                     ) : null}
                     <Button variant="ghost" onClick={() => void signOut()}>
-                      Sign out
+                      {accounts.length > 1
+                        ? `Sign out of @${user.namespace}`
+                        : "Sign out"}
                     </Button>
                   </>
                 ) : (

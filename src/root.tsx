@@ -14,17 +14,15 @@ import {
 import "./index.css"
 
 import { ErrorBoundary as AppErrorBoundary } from "@/components/common/error-boundary"
+import { RegistryGate } from "@/components/common/registry-down"
 import { AppShell } from "@/components/layout/app-shell"
 import { ThemeProvider } from "@/components/theme-provider"
 import { ButtonLink } from "@/components/common/button-link"
 import { AuthProvider } from "@/context/auth"
-import { SERVER_API_URL, serverApi } from "@/lib/api.server"
+import { resolveActiveAccount } from "@/lib/accounts.server"
+import { SERVER_API_URL } from "@/lib/api.server"
 import { PreloadProvider } from "@/lib/preload"
-import {
-  destroySession,
-  readSession,
-  requireSessionSecret,
-} from "@/lib/session.server"
+import { readSession, requireSessionSecret } from "@/lib/session.server"
 
 const DESCRIPTION = "Browse and publish TurboWarp extensions built with Twext."
 
@@ -55,24 +53,14 @@ export async function loader({ request }: { request: Request }) {
   requireSessionSecret()
 
   const session = await readSession(request)
-  const token = session.get("token")
-  if (!token) {
-    return { user: null, apiBaseUrl: SERVER_API_URL }
-  }
+  // Every account this browser is signed in to, which one is active, and a new
+  // cookie whenever the registry disagreed with what was stored.
+  const { user, accounts, cookie } = await resolveActiveAccount(session)
+  const payload = { user, accounts, apiBaseUrl: SERVER_API_URL }
 
-  try {
-    return {
-      user: await serverApi(token).users.me(),
-      apiBaseUrl: SERVER_API_URL,
-    }
-  } catch {
-    // The stored token is no longer accepted, so the browser should not keep
-    // sending it on every page load.
-    return Response.json(
-      { user: null, apiBaseUrl: SERVER_API_URL },
-      { headers: { "Set-Cookie": await destroySession(session) } }
-    )
-  }
+  return cookie
+    ? Response.json(payload, { headers: { "Set-Cookie": cookie } })
+    : payload
 }
 
 export function meta() {
@@ -88,7 +76,7 @@ export function meta() {
 }
 
 export default function App() {
-  const { user } = useLoaderData<typeof loader>()
+  const { user, accounts } = useLoaderData<typeof loader>()
   const { pathname } = useLocation()
 
   // Embed documents are rendered inside someone else's page, so they skip the
@@ -104,10 +92,12 @@ export default function App() {
   return (
     <ThemeProvider>
       <PreloadProvider>
-        <AuthProvider initialUser={user}>
-          <AppErrorBoundary>
-            {embedded ? <Outlet /> : <AppShell />}
-          </AppErrorBoundary>
+        <AuthProvider initialUser={user} initialAccounts={accounts}>
+          <RegistryGate>
+            <AppErrorBoundary>
+              {embedded ? <Outlet /> : <AppShell />}
+            </AppErrorBoundary>
+          </RegistryGate>
         </AuthProvider>
       </PreloadProvider>
     </ThemeProvider>

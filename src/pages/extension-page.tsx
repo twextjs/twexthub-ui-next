@@ -4,6 +4,7 @@ import {
   DownloadIcon,
   ExternalLinkIcon,
   FileCodeIcon,
+  HourglassIcon,
   SettingsIcon,
   ShieldAlertIcon,
   TriangleAlertIcon,
@@ -49,7 +50,7 @@ import { loadExtensionData, type ExtensionData } from "@/lib/extension-data"
 import { formatDate, formatNumber } from "@/lib/format"
 import { licenseName } from "@/lib/licenses"
 import { extensionKey } from "@/lib/preload"
-import { apiUrl, downloadUrl, saveBlob, th } from "@/lib/twexthub"
+import { apiUrl, badgeUrl, downloadUrl, saveBlob, th } from "@/lib/twexthub"
 import { isSaved, toggleSaved } from "@/lib/saved"
 
 type BadgeField = "all" | "version" | "downloads" | "license"
@@ -113,7 +114,7 @@ function ExtensionView({ namespace, id }: { namespace: string; id: string }) {
     )
   }
 
-  const { extension, tags, owners, isOrgOwner } = result.data
+  const { extension, tags, owners, isOrgOwner, unpublished } = result.data
   const primaryOwner = owners[0]
   const latest = extension.versions[0]
   const isOwner =
@@ -127,7 +128,15 @@ function ExtensionView({ namespace, id }: { namespace: string; id: string }) {
     latest?.dist?.downloadUrl ??
     downloadUrl(extension.namespace, extension.id, extension.version)
   const badgePath = `/badge/@${extension.namespace}/${extension.id}`
-  const badgeUrl = apiUrl(
+  // The preview is loaded from this server, which fetches the SVG; the copied
+  // address still names the registry, because a README shows the badge on a
+  // site this app is not in front of.
+  const badgeSrc = badgeUrl(
+    extension.namespace,
+    extension.id,
+    badgeField === "all" ? undefined : badgeField
+  )
+  const badgeRegistryUrl = apiUrl(
     badgeField === "all" ? badgePath : `${badgePath}/${badgeField}`
   )
   const pageUrl =
@@ -135,7 +144,7 @@ function ExtensionView({ namespace, id }: { namespace: string; id: string }) {
       ? ""
       : `${window.location.origin}/@${extension.namespace}/${extension.id}`
   const badgeLabel = BADGE_FIELDS.find((field) => field.value === badgeField)
-  const badgeMarkdown = `[![TwextHub ${badgeLabel?.label ?? ""}](${badgeUrl})](${pageUrl})`
+  const badgeMarkdown = `[![TwextHub ${badgeLabel?.label ?? ""}](${badgeRegistryUrl})](${pageUrl})`
 
   async function handleDownload(version: string) {
     setDownloading(version)
@@ -188,6 +197,9 @@ function ExtensionView({ namespace, id }: { namespace: string; id: string }) {
               {latest?.status === "deprecated" ? (
                 <Badge variant="destructive">deprecated</Badge>
               ) : null}
+              {unpublished ? (
+                <VersionStatusBadge status={latest?.status ?? "pending"} />
+              ) : null}
             </div>
             <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
               {extension.description || "No description yet."}
@@ -216,17 +228,21 @@ function ExtensionView({ namespace, id }: { namespace: string; id: string }) {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" onClick={handleSave}>
-              {saved ? <BookmarkCheckIcon /> : <BookmarkIcon />}
-              {saved ? "Saved" : "Save"}
-            </Button>
-            <Button
-              onClick={() => void handleDownload(extension.version)}
-              disabled={downloading !== null}
-            >
-              <DownloadIcon />
-              {downloading ? "Downloading…" : "Download file"}
-            </Button>
+            {unpublished ? null : (
+              <>
+                <Button variant="outline" onClick={handleSave}>
+                  {saved ? <BookmarkCheckIcon /> : <BookmarkIcon />}
+                  {saved ? "Saved" : "Save"}
+                </Button>
+                <Button
+                  onClick={() => void handleDownload(extension.version)}
+                  disabled={downloading !== null}
+                >
+                  <DownloadIcon />
+                  {downloading ? "Downloading…" : "Download file"}
+                </Button>
+              </>
+            )}
             {isOwner ? (
               <ButtonLink
                 variant="ghost"
@@ -235,14 +251,41 @@ function ExtensionView({ namespace, id }: { namespace: string; id: string }) {
                 <SettingsIcon /> Manage
               </ButtonLink>
             ) : null}
-            <ReportDialog
-              targetType="extension"
-              targetNamespace={extension.namespace}
-              targetExtensionId={extension.id}
-            />
+            {unpublished ? null : (
+              <ReportDialog
+                targetType="extension"
+                targetNamespace={extension.namespace}
+                targetExtensionId={extension.id}
+              />
+            )}
           </div>
         </div>
       </header>
+
+      {unpublished ? (
+        <Alert>
+          <HourglassIcon />
+          <AlertTitle>
+            {latest?.status === "rejected"
+              ? "A moderator asked for changes"
+              : "This project is waiting for review"}
+          </AlertTitle>
+          <AlertDescription>
+            {latest?.status === "rejected"
+              ? latest.rejectionReason ||
+                "The release needs changes before it can be published."
+              : "A first release is reviewed before it joins the registry, so there is nothing to install yet."}{" "}
+            Only the owners of @{extension.namespace} can see this page.{" "}
+            {isOwner ? (
+              <Link
+                to={`/@${extension.namespace}/${extension.id}/manage?tab=releases`}
+              >
+                Manage releases
+              </Link>
+            ) : null}
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       {extension.isUnsandboxed ? (
         <Alert>
@@ -267,67 +310,69 @@ function ExtensionView({ namespace, id }: { namespace: string; id: string }) {
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_310px]">
         <div className="flex min-w-0 flex-col gap-8">
-          <section className="rounded-lg border bg-muted/20 p-4 sm:p-5">
-            <div>
-              <h2 className="text-lg font-semibold tracking-tight">
-                Install in TurboWarp, PenguinMod, or MistWarp
-              </h2>
-              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                Copy the install link for the editor you use, then add it to
-                that editor’s extension loader. You can also download the
-                compiled file and load it locally.
+          {unpublished ? null : (
+            <section className="rounded-lg border bg-muted/20 p-4 sm:p-5">
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight">
+                  Install in TurboWarp, PenguinMod, or MistWarp
+                </h2>
+                <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+                  Copy the install link for the editor you use, then add it to
+                  that editor’s extension loader. You can also download the
+                  compiled file and load it locally.
+                </p>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <InstallTarget
+                  name="TurboWarp"
+                  available={extension.isUnsandboxed !== true}
+                  description={
+                    extension.isUnsandboxed
+                      ? "Not available for unsandboxed extensions. Download the file and load it locally instead."
+                      : "Use the link in TurboWarp’s extension loader."
+                  }
+                  installUrl={installUrl}
+                />
+                <InstallTarget
+                  name="PenguinMod"
+                  available
+                  description="Loads sandboxed and unsandboxed extensions from a link."
+                  installUrl={installUrl}
+                />
+                <InstallTarget
+                  name="MistWarp"
+                  available
+                  description="Loads sandboxed and unsandboxed extensions from a link."
+                  installUrl={installUrl}
+                />
+              </div>
+              <ol className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
+                {[
+                  "Copy the link for your editor.",
+                  "Open its extension loader.",
+                  "Paste the link and confirm.",
+                ].map((step, index) => (
+                  <li key={step} className="flex items-start gap-2">
+                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border bg-background font-mono text-[10px] text-muted-foreground">
+                      {index + 1}
+                    </span>
+                    <span className="text-muted-foreground">{step}</span>
+                  </li>
+                ))}
+              </ol>
+              <p className="mt-3 text-xs text-muted-foreground">
+                Looking for a different release? Download it from the list
+                below, or read the{" "}
+                <Link
+                  to="/developers"
+                  className="text-foreground hover:underline"
+                >
+                  install guide
+                </Link>
+                .
               </p>
-            </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
-              <InstallTarget
-                name="TurboWarp"
-                available={extension.isUnsandboxed !== true}
-                description={
-                  extension.isUnsandboxed
-                    ? "Not available for unsandboxed extensions. Download the file and load it locally instead."
-                    : "Use the link in TurboWarp’s extension loader."
-                }
-                installUrl={installUrl}
-              />
-              <InstallTarget
-                name="PenguinMod"
-                available
-                description="Loads sandboxed and unsandboxed extensions from a link."
-                installUrl={installUrl}
-              />
-              <InstallTarget
-                name="MistWarp"
-                available
-                description="Loads sandboxed and unsandboxed extensions from a link."
-                installUrl={installUrl}
-              />
-            </div>
-            <ol className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
-              {[
-                "Copy the link for your editor.",
-                "Open its extension loader.",
-                "Paste the link and confirm.",
-              ].map((step, index) => (
-                <li key={step} className="flex items-start gap-2">
-                  <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border bg-background font-mono text-[10px] text-muted-foreground">
-                    {index + 1}
-                  </span>
-                  <span className="text-muted-foreground">{step}</span>
-                </li>
-              ))}
-            </ol>
-            <p className="mt-3 text-xs text-muted-foreground">
-              Looking for a different release? Download it from the list below,
-              or read the{" "}
-              <Link
-                to="/developers"
-                className="text-foreground hover:underline"
-              >
-                install guide
-              </Link>
-              .
-            </p>
-          </section>
+            </section>
+          )}
 
           <section className="flex flex-col gap-3">
             <div className="flex flex-wrap items-end justify-between gap-2">
@@ -336,8 +381,9 @@ function ExtensionView({ namespace, id }: { namespace: string; id: string }) {
                   Releases
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Every published release, newest first. Download counts start
-                  when someone installs the compiled file.
+                  {unpublished
+                    ? "Every release in this project, newest first. Nothing here is downloadable until a moderator publishes it."
+                    : "Every published release, newest first. Download counts start when someone installs the compiled file."}
                 </p>
               </div>
               {Object.keys(tags).length > 0 ? (
@@ -403,7 +449,7 @@ function ExtensionView({ namespace, id }: { namespace: string; id: string }) {
                 mono
               />
               <DetailRow
-                label="Published"
+                label={unpublished ? "Submitted" : "Published"}
                 value={formatDate(extension.publishedAt)}
               />
               <DetailRow
@@ -452,51 +498,53 @@ function ExtensionView({ namespace, id }: { namespace: string; id: string }) {
             </ul>
           </section>
 
-          <section className="rounded-lg border p-4">
-            <h2 className="text-sm font-medium">Badge for your project</h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Add this markdown to a README or project page.
-            </p>
-            <div className="mt-2 flex flex-col gap-1.5">
-              <Label htmlFor="badge-field" className="text-xs">
-                Badge contents
-              </Label>
-              <Select
-                items={BADGE_FIELDS}
-                value={badgeField}
-                onValueChange={(value) => setBadgeField(value as BadgeField)}
+          {unpublished ? null : (
+            <section className="rounded-lg border p-4">
+              <h2 className="text-sm font-medium">Badge for your project</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Add this markdown to a README or project page.
+              </p>
+              <div className="mt-2 flex flex-col gap-1.5">
+                <Label htmlFor="badge-field" className="text-xs">
+                  Badge contents
+                </Label>
+                <Select
+                  items={BADGE_FIELDS}
+                  value={badgeField}
+                  onValueChange={(value) => setBadgeField(value as BadgeField)}
+                >
+                  <SelectTrigger id="badge-field" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {BADGE_FIELDS.map((field) => (
+                      <SelectItem key={field.value} value={field.value}>
+                        {field.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <img
+                src={badgeSrc}
+                alt={`${extension.id} badge`}
+                className="mt-2 h-5"
+              />
+              <CopyButton
+                className="mt-2 w-full"
+                value={badgeMarkdown}
+                label="Copy badge markdown"
+              />
+              <a
+                href={badgeSrc}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
               >
-                <SelectTrigger id="badge-field" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {BADGE_FIELDS.map((field) => (
-                    <SelectItem key={field.value} value={field.value}>
-                      {field.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <img
-              src={badgeUrl}
-              alt={`${extension.id} badge`}
-              className="mt-2 h-5"
-            />
-            <CopyButton
-              className="mt-2 w-full"
-              value={badgeMarkdown}
-              label="Copy badge markdown"
-            />
-            <a
-              href={badgeUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-2 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-            >
-              <ExternalLinkIcon className="size-3.5" /> View SVG badge
-            </a>
-          </section>
+                <ExternalLinkIcon className="size-3.5" /> View SVG badge
+              </a>
+            </section>
+          )}
         </aside>
       </div>
 
@@ -572,6 +620,12 @@ function VersionRow({
   canViewSource: boolean
   onViewSource: () => void
 }) {
+  // A release that is still waiting has no compiled file to hand out, so the
+  // download affordance is only there once the registry has published one.
+  const downloadable = Boolean(
+    version._links?.download ?? version.dist?.downloadUrl
+  )
+
   return (
     <TableRow>
       <TableCell className="font-mono text-xs">{version.version}</TableCell>
@@ -591,14 +645,16 @@ function VersionRow({
               <FileCodeIcon /> Source
             </Button>
           ) : null}
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={onDownload}
-            disabled={downloading}
-          >
-            <DownloadIcon /> {downloading ? "…" : "Download"}
-          </Button>
+          {downloadable ? (
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={onDownload}
+              disabled={downloading}
+            >
+              <DownloadIcon /> {downloading ? "…" : "Download"}
+            </Button>
+          ) : null}
         </div>
       </TableCell>
     </TableRow>

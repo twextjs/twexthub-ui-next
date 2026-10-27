@@ -57,6 +57,7 @@ export const settingsKeys = {
 } as const
 
 export const adminKeys = {
+  users: "admin.users",
   queue: "admin.queue",
   audit: "admin.audit",
   config: "admin.config",

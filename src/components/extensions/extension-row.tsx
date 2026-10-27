@@ -3,18 +3,33 @@ import {
   BookmarkIcon,
   ChevronRightIcon,
   DownloadIcon,
+  HourglassIcon,
+  TriangleAlertIcon,
 } from "lucide-react"
 import { Link } from "react-router"
 import { toast } from "sonner"
 
 import type { ExtensionSummary } from "@twextjs/twexthubkit"
 
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { formatNumber, formatRelative, initials } from "@/lib/format"
 import { toggleSaved, useSaved } from "@/lib/saved"
 import { cn } from "@/lib/utils"
 
-export function ExtensionRow({ extension }: { extension: ExtensionSummary }) {
+export interface ReviewSummary {
+  pending: number
+  rejected: number
+}
+
+export function ExtensionRow({
+  extension,
+  review,
+}: {
+  extension: ExtensionSummary
+  /** Releases waiting on a moderator, for an owner looking at their own row. */
+  review?: ReviewSummary
+}) {
   const saved = useSaved()
   const isSaved = saved.some(
     (entry) =>
@@ -50,6 +65,16 @@ export function ExtensionRow({ extension }: { extension: ExtensionSummary }) {
           </span>
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             <span className="font-mono">v{extension.version}</span>
+            {review && review.pending > 0 ? (
+              <Badge variant="outline">
+                <HourglassIcon /> {review.pending} in review
+              </Badge>
+            ) : null}
+            {review && review.rejected > 0 ? (
+              <Badge variant="destructive">
+                <TriangleAlertIcon /> {review.rejected} needs changes
+              </Badge>
+            ) : null}
             <span className="flex items-center gap-1">
               <DownloadIcon className="size-3" />
               {formatNumber(extension.downloads)}

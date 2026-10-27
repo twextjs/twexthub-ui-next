@@ -1,3 +1,4 @@
+import { resolveManageAccess } from "@/lib/extension-access"
 import { loaderApi } from "@/lib/loader-api.server"
 import { manageKeys } from "@/lib/preload"
 
@@ -31,39 +32,10 @@ export async function loader({
   }
 
   try {
-    const extension = await kit.extensions.get(namespace, id)
-    let allowed = isAdmin || extension.namespace === user.namespace
+    const access = await resolveManageAccess(kit, namespace, id, user, isAdmin)
+    preload[manageKeys.access(namespace, id, user.namespace, isAdmin)] = access
 
-    if (!allowed) {
-      await put("owners-for-access", () =>
-        kit.extensions.owners.list(namespace, id)
-      )
-      const owners = preload["owners-for-access"] as
-        { data: Array<{ namespace: string }> } | undefined
-      allowed = Boolean(
-        owners?.data.some((owner) => owner.namespace === user.namespace)
-      )
-      delete preload["owners-for-access"]
-
-      if (!allowed && extension.namespace !== user.namespace) {
-        await put("org-owners-for-access", () =>
-          kit.orgs.listOwners(extension.namespace)
-        )
-        const orgOwners = preload["org-owners-for-access"] as
-          { data: Array<{ namespace: string }> } | undefined
-        allowed = Boolean(
-          orgOwners?.data.some((owner) => owner.namespace === user.namespace)
-        )
-        delete preload["org-owners-for-access"]
-      }
-    }
-
-    preload[manageKeys.access(namespace, id, user.namespace, isAdmin)] = {
-      extension,
-      allowed,
-    }
-
-    if (allowed) {
+    if (access.allowed) {
       await Promise.all([
         put(manageKeys.hidden(namespace, id), async () => {
           const [pending, rejected] = await Promise.all([

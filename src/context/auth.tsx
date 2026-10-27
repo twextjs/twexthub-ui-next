@@ -9,7 +9,9 @@ import {
 import { useNavigate } from "react-router"
 
 import type { AuthSession, MfaRequired, User } from "@twextjs/twexthubkit"
+import { toast } from "sonner"
 
+import type { AccountSummary } from "@/lib/accounts"
 import { th } from "@/lib/twexthub"
 
 export interface SignInInput {
@@ -21,8 +23,19 @@ export type SignInResult =
   | { kind: "session"; session: AuthSession }
   | { kind: "mfa"; challenge: MfaRequired }
 
+/** What the account menu needs to know about the account behind it. */
+function accountSummaryOf(user: User): AccountSummary {
+  return {
+    namespace: user.namespace,
+    displayName: user.displayName,
+    avatarUrl: user.avatarUrl,
+  }
+}
+
 interface AuthContextValue {
   user: User | null
+  /** Every account this browser is signed in to, in the order they were added. */
+  accounts: AccountSummary[]
   loading: boolean
   isAdmin: boolean
   signIn: (input: SignInInput) => Promise<SignInResult>
@@ -37,10 +50,19 @@ interface AuthContextValue {
     displayName?: string
   }) => Promise<AuthSession>
   acceptSession: (session: AuthSession) => void
+  /** Make another account this browser holds the one every request runs as. */
+  switchAccount: (namespace: string) => Promise<void>
   remember: (remember: boolean) => void
   signOut: () => Promise<void>
   refresh: () => Promise<void>
   setUser: (user: User) => void
+}
+
+const ACCOUNTS_PATH = "/__session/accounts"
+
+interface SessionAccountsResponse {
+  accounts: AccountSummary[]
+  active: string | null
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
@@ -48,11 +70,18 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 export function AuthProvider({
   children,
   initialUser,
+  initialAccounts,
 }: {
   children: ReactNode
   initialUser: User | null
+  initialAccounts: AccountSummary[]
 }) {
   const [user, setUserState] = useState<User | null>(initialUser)
+  // The accounts this browser holds are the server's to decide, and sign-in,
+  // switching, and sign-out all rewrite them here as they happen. The list is
+  // taken from the last page load as a starting point rather than synced from
+  // it, so a later navigation cannot walk a fresh sign-in back.
+  const [accounts, setAccounts] = useState<AccountSummary[]>(initialAccounts)
   const navigate = useNavigate()
 
   // The session cookie is written by the server. The in-memory user is what
@@ -61,6 +90,17 @@ export function AuthProvider({
   // mid-flow.
   const acceptSession = useCallback((session: AuthSession) => {
     setUserState(session.user)
+    setAccounts((current) => {
+      const summary = accountSummaryOf(session.user)
+      const known = current.some(
+        (entry) => entry.namespace === summary.namespace
+      )
+      return known
+        ? current.map((entry) =>
+            entry.namespace === summary.namespace ? summary : entry
+          )
+        : [...current, summary]
+    })
   }, [])
 
   const signIn = useCallback(
@@ -107,15 +147,63 @@ export function AuthProvider({
     })
   }, [])
 
-  const signOut = useCallback(async () => {
-    try {
-      await th.sessions.revokeCurrent()
-    } catch {
-      // The local session is gone either way.
-    } finally {
-      setUserState(null)
-      navigate("/")
+  const switchAccount = useCallback(async (namespace: string) => {
+    const response = await fetch(ACCOUNTS_PATH, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "switch", namespace }),
+      credentials: "same-origin",
+    })
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string
+      } | null
+      throw new Error(payload?.error ?? "We couldn’t switch accounts.")
     }
+
+    // Everything on the page was fetched as the previous account: the settings
+    // lists, the inbox, and the manage pages are all that account's business,
+    // so the document is reloaded rather than patched.
+    window.location.reload()
+  }, [])
+
+  const signOut = useCallback(async () => {
+    let remaining: AccountSummary[]
+    try {
+      // Signing out ends this account's session at the registry and leaves any
+      // other account this browser holds signed in.
+      const response = await fetch(ACCOUNTS_PATH, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "signOut" }),
+        credentials: "same-origin",
+      })
+      if (response.ok) {
+        remaining = ((await response.json()) as SessionAccountsResponse)
+          .accounts
+      } else if (response.status === 401) {
+        // The session is already gone, so there is nothing left to end.
+        remaining = []
+      } else {
+        throw new Error("Sign-out was refused.")
+      }
+    } catch {
+      // The session lives on the server, so a sign-out that never got there
+      // has not happened. Saying otherwise would leave the browser signed in
+      // and the menu claiming it is not.
+      toast.error("We couldn’t sign out. Check your connection and try again.")
+      return
+    }
+
+    if (remaining.length > 0) {
+      setAccounts(remaining)
+      window.location.reload()
+      return
+    }
+
+    setAccounts([])
+    setUserState(null)
+    navigate("/")
   }, [navigate])
 
   const refresh = useCallback(async () => {
@@ -125,17 +213,27 @@ export function AuthProvider({
 
   const setUser = useCallback((account: User) => {
     setUserState(account)
+    // A renamed account or a new avatar belongs in the switcher too.
+    setAccounts((current) =>
+      current.map((entry) =>
+        entry.namespace === account.namespace
+          ? accountSummaryOf(account)
+          : entry
+      )
+    )
   }, [])
 
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
+      accounts,
       loading: false,
       isAdmin: user?.role === "admin",
       signIn,
       completeMfa,
       signUp,
       acceptSession,
+      switchAccount,
       remember,
       signOut,
       refresh,
@@ -143,10 +241,12 @@ export function AuthProvider({
     }),
     [
       user,
+      accounts,
       signIn,
       completeMfa,
       signUp,
       acceptSession,
+      switchAccount,
       remember,
       signOut,
       refresh,

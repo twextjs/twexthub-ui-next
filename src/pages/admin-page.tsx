@@ -5,10 +5,18 @@ import { InstanceTab } from "@/components/admin/instance-tab"
 import { LegalTab } from "@/components/admin/legal-tab"
 import { AdminReportsTab } from "@/components/admin/reports-tab"
 import { ReviewTab } from "@/components/admin/review-tab"
+import { UsersTab } from "@/components/admin/users-tab"
 import { PageHeader } from "@/components/common/page-header"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
-const TABS = ["review", "reports", "audit", "instance", "legal"] as const
+const TABS = [
+  "users",
+  "review",
+  "reports",
+  "audit",
+  "instance",
+  "legal",
+] as const
 type AdminTab = (typeof TABS)[number]
 
 export function AdminPage() {
@@ -23,7 +31,7 @@ export function AdminPage() {
       <PageHeader
         eyebrow="Administration"
         title="Administration"
-        description="Review submissions, handle reports, read the audit log, and manage registry settings and legal documents."
+        description="Manage accounts, review submissions, handle reports, read the audit log, and manage registry settings and legal documents."
       />
 
       <Tabs
@@ -39,12 +47,16 @@ export function AdminPage() {
           variant="line"
           className="w-full justify-start overflow-x-auto"
         >
+          <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="review">Review queue</TabsTrigger>
           <TabsTrigger value="reports">Reports</TabsTrigger>
           <TabsTrigger value="audit">Audit log</TabsTrigger>
           <TabsTrigger value="instance">Registry</TabsTrigger>
           <TabsTrigger value="legal">Legal</TabsTrigger>
         </TabsList>
+        <TabsContent value="users">
+          <UsersTab />
+        </TabsContent>
         <TabsContent value="review">
           <ReviewTab />
         </TabsContent>

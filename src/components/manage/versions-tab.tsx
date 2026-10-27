@@ -102,7 +102,18 @@ export function VersionsTab({ extension }: { extension: ExtensionDetail }) {
     }
   }
 
-  const rows = [...(hidden.data ?? []), ...extension.versions]
+  // A project whose first release is still waiting for review has no published
+  // detail at all, so the rows only an owner can see are also the extension's
+  // own list; keep one row per version either way.
+  const rows = [
+    ...new Map(
+      [...(hidden.data ?? []), ...extension.versions].map((version) => [
+        version.version,
+        version,
+      ])
+    ).values(),
+  ]
+  const waitingForReview = rows.some((version) => version.status === "pending")
 
   return (
     <div className="flex flex-col gap-4">
@@ -111,6 +122,9 @@ export function VersionsTab({ extension }: { extension: ExtensionDetail }) {
         <p className="text-sm text-muted-foreground">
           Deprecating keeps a release available with a notice. Removing a
           release takes it out of the registry.
+          {waitingForReview
+            ? " A release in review is published or sent back by a moderator, so it cannot be removed here."
+            : null}
         </p>
       </div>
 
@@ -191,13 +205,16 @@ export function VersionsTab({ extension }: { extension: ExtensionDetail }) {
                       <DownloadIcon /> Download
                     </Button>
                   ) : null}
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={() => setYankTarget(version)}
-                  >
-                    <Trash2Icon /> Remove release
-                  </Button>
+                  {version.status === "published" ||
+                  version.status === "deprecated" ? (
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => setYankTarget(version)}
+                    >
+                      <Trash2Icon /> Remove release
+                    </Button>
+                  ) : null}
                 </div>
               </div>
               {version.rejectionReason ? (
